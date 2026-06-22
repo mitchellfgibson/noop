@@ -179,6 +179,14 @@ private val builtInMetrics: List<MetricSpec> = listOf(
  *  check-in — matching the macOS MetricCatalog entries exactly (v2.2.0 parity). seriesKey/
  *  seriesSource are filled in at discovery time. */
 private val knownSeriesMetrics: Map<String, MetricSpec> = mapOf(
+    // #605/#608: imported avg/max HR is written to metricSeries (Apple Health / WHOOP CSV / Xiaomi) and
+    // the Compare screen exposes it, but Explore's picker didn't — iOS MetricCatalog has had both. Series-
+    // backed (no DailyMetric column), "Heart" category, parity. (Strap-only per-second HR lives in the
+    // Deep Timeline; this surfaces the per-day avg/max for imported sources.)
+    "avg_hr" to MetricSpec("avg_hr", "Average Heart Rate", "bpm", "Heart",
+        Palette.metricRose, null, 0),
+    "max_hr" to MetricSpec("max_hr", "Max Heart Rate", "bpm", "Heart",
+        Palette.metricRose, null, 0),
     "calories_in" to MetricSpec("calories_in", "Calories In", "kcal", "Nutrition",
         Palette.metricAmber, null, 0),
     "protein_g" to MetricSpec("protein_g", "Protein", "g", "Nutrition",
