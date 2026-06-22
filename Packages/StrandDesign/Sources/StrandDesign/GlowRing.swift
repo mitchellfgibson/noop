@@ -46,14 +46,7 @@ public struct GlowRing: View {
                 .stroke(StrandPalette.textPrimary.opacity(0.10),
                         style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
 
-            // A TIGHT glow hugging the arc — subtle, additive on dark, hidden on light. Kept narrow so
-            // the ring stays crisp; the sharp arc below carries the read.
-            arc.stroke(color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
-                .blur(radius: lineWidth * 0.3)
-                .opacity(0.22)
-                .additiveBloom()
-
-            // The crisp, solid arc.
+            // Design Reset: NO glow. A flat, crisp solid arc only — the clean Material-style look.
             arc.stroke(color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
 
             // Centred rolling number.

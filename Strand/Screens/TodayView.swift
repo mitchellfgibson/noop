@@ -1347,24 +1347,18 @@ struct TodayView: View {
     @ViewBuilder
     private func scoreHeroRow(d: DailyMetric?, score: Double?) -> some View {
         GeometryReader { geo in
-            // Centre (hero) ring sized off width; the flanking rings are ~66% of it. Grouped tightly and
-            // centred so the trio reads as one cluster, bottom-aligned so all three share a baseline and
-            // the larger Charge ring rises above its neighbours. The rings float on the page (no boxed
-            // card) like WHOOP.
-            // Design Reset: smaller, near-equal rings in a tight row (was a big 150pt Charge with 66%
-            // flanks) so the trio reads compact like the clean target, not three big donuts of air.
-            let center = min(116, max(94, (geo.size.width - 28) / 3.1))
-            let side = (center * 0.86).rounded()
-            HStack(alignment: .center, spacing: 14) {
-                // Component 4 — the Charge ring badges its real per-day merge winner (On-device / Whoop /
-                // Apple Health); Rest does too via its tile. Effort has no cross-source merge, so no badge.
-                heroRingColumn(section: .rest, domain: .rest, provenanceKey: "sleep_performance") { restRing(diameter: side) }
-                heroRingColumn(section: .charge, domain: .charge, provenanceKey: "recovery") { chargeRing(score: score, d: d, diameter: center) }
-                heroRingColumn(section: .effort, domain: .effort) { effortRing(d: d, diameter: side) }
+            // Design Reset: three EQUAL clean rings (no glow, faint track) in Charge / Effort / Rest order
+            // with generous spacing — mirrors the flat mockup. Sized off width so they stay equal on any phone.
+            let ring = min(98, max(82, (geo.size.width - 56) / 3.4))
+            HStack(alignment: .top, spacing: 22) {
+                // Component 4 — Charge/Rest badge their real per-day merge winner; Effort has no badge.
+                heroRingColumn(section: .charge, domain: .charge, provenanceKey: "recovery") { chargeRing(score: score, d: d, diameter: ring) }
+                heroRingColumn(section: .effort, domain: .effort) { effortRing(d: d, diameter: ring) }
+                heroRingColumn(section: .rest, domain: .rest, provenanceKey: "sleep_performance") { restRing(diameter: ring) }
             }
             .frame(width: geo.size.width, height: geo.size.height, alignment: .center)
         }
-        .frame(height: 158)
+        .frame(height: 150)
     }
 
     /// One hero ring column: the ring centred, with a tappable UPPERCASE domain label + chevron
@@ -1417,7 +1411,7 @@ struct TodayView: View {
     private func chargeRing(score: Double?, d: DailyMetric?, diameter: CGFloat) -> some View {
         if let s = score {
             GlowRing(fraction: s / 100, value: s, format: { "\(Int($0.rounded()))" },
-                     color: StrandPalette.chargeColor, diameter: diameter, lineWidth: diameter * 0.055)
+                     color: StrandPalette.chargeColor, diameter: diameter, lineWidth: diameter * 0.085)
         } else {
             emptyHeroRing(diameter: diameter) { ringEmptyOverlay(d: d) }
         }
@@ -1430,7 +1424,7 @@ struct TodayView: View {
         if effortStrain(d) != nil, let gv = effortGaugeValue(d) {
             GlowRing(fraction: gv / effortGaugeMax, value: gv,
                      format: { effortScale == .whoop ? String(format: "%.1f", $0) : "\(Int($0.rounded()))" },
-                     color: StrandPalette.effortColor, diameter: diameter, lineWidth: diameter * 0.055)
+                     color: StrandPalette.effortColor, diameter: diameter, lineWidth: diameter * 0.085)
         } else {
             emptyHeroRing(diameter: diameter) { ringNoData() }
         }
@@ -1441,7 +1435,7 @@ struct TodayView: View {
     private func restRing(diameter: CGFloat) -> some View {
         if let s = restScore {
             GlowRing(fraction: s / 100, value: s, format: { "\(Int($0.rounded()))" },
-                     color: StrandPalette.restColor, diameter: diameter, lineWidth: diameter * 0.055)
+                     color: StrandPalette.restColor, diameter: diameter, lineWidth: diameter * 0.085)
         } else {
             emptyHeroRing(diameter: diameter) { ringNoData() }
         }
@@ -1452,7 +1446,7 @@ struct TodayView: View {
     private func emptyHeroRing<Overlay: View>(diameter: CGFloat, @ViewBuilder overlay: () -> Overlay) -> some View {
         ZStack {
             Circle().stroke(StrandPalette.textPrimary.opacity(0.10),
-                            style: StrokeStyle(lineWidth: diameter * 0.055, lineCap: .round))
+                            style: StrokeStyle(lineWidth: diameter * 0.085, lineCap: .round))
             overlay()
         }
         .frame(width: diameter, height: diameter)
