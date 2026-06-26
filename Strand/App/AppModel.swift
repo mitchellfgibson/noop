@@ -3,6 +3,7 @@ import Combine
 import WhoopProtocol
 import WhoopStore
 import StrandAnalytics
+import StrandImport
 #if os(iOS)
 import UserNotifications
 #endif
@@ -472,6 +473,33 @@ final class AppModel: ObservableObject {
     private func emitWorkoutsTrace(_ build: @autoclosure () -> String) {
         guard TestCentre.active(.workouts) else { return }
         live.append(log: build(), domain: .workouts)
+    }
+
+    /// The gated sink the import handlers pass to the importers for the Import & Data Ingest test mode.
+    /// Returns nil when the mode is off, so the importer takes its byte-identical untraced path (it builds
+    /// no trace line and captures nothing extra); returns a `@Sendable` closure that hops the batch of
+    /// already-redacted lines to the main actor (LiveState is @MainActor) and appends them, tagged
+    /// `.dataImport`, in order, when the mode is on. The importer runs nonisolated, so the main-actor hop
+    /// keeps the append race-free. One UserDefaults bool read decides whether any of this runs.
+    private func importTraceSink() -> (@Sendable ([String]) -> Void)? {
+        guard TestCentre.active(.dataImport) else { return nil }
+        return { [weak self] lines in
+            Task { @MainActor in
+                guard let self else { return }
+                for line in lines { self.live.append(log: line, domain: .dataImport) }
+            }
+        }
+    }
+
+    /// Emit the file-meta line for an import run (detected kind + extension + size BUCKET, never the path or
+    /// name), tagged `.dataImport`, iff the mode is on. Called by the handlers that have the materialized
+    /// URL. The size is bucketed inside `ImportTrace`, so no byte-exact size or filename leaves the device.
+    private func emitImportFileMeta(kind: DataSourceKind, url: URL) {
+        guard TestCentre.active(.dataImport) else { return }
+        let ext = url.pathExtension
+        let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -1
+        live.append(log: ImportTrace.fileMetaLine(sourceKind: kind, ext: ext, sizeBytes: size),
+                    domain: .dataImport)
     }
 
     /// Persist the in-flight manual workout to `UserDefaults` so it survives the app being killed mid-
@@ -1372,7 +1400,9 @@ final class AppModel: ObservableObject {
                 }
                 let local = try await Self.materializeForImport(url)
                 defer { local.cleanup() }
-                let summary = try await WhoopImporter.importExport(url: local.url, into: store, deviceId: deviceId)
+                emitImportFileMeta(kind: .whoopExport, url: local.url)
+                let summary = try await WhoopImporter.importExport(url: local.url, into: store,
+                                                                   deviceId: deviceId, trace: importTraceSink())
                 try? await store.checkpointWAL()   // reclaim the WAL a bulk import grew (#590)
                 await repo.refresh()
                 let span: String
@@ -1401,7 +1431,9 @@ final class AppModel: ObservableObject {
                 }
                 let local = try await Self.materializeForImport(url)
                 defer { local.cleanup() }
-                let summary = try await XiaomiImporter.importExport(url: local.url, into: store)
+                emitImportFileMeta(kind: .xiaomiBand, url: local.url)
+                let summary = try await XiaomiImporter.importExport(url: local.url, into: store,
+                                                                    trace: importTraceSink())
                 try? await store.checkpointWAL()   // reclaim the WAL a bulk import grew (#590)
                 await repo.refresh()
                 let span: String
@@ -1433,7 +1465,9 @@ final class AppModel: ObservableObject {
                 }
                 let local = try await Self.materializeForImport(url)
                 defer { local.cleanup() }
-                let summary = try await AppleHealthImport.importExport(url: local.url, into: store, deviceId: appleDeviceId)
+                emitImportFileMeta(kind: .appleHealth, url: local.url)
+                let summary = try await AppleHealthImport.importExport(url: local.url, into: store,
+                                                                       deviceId: appleDeviceId, trace: importTraceSink())
                 try? await store.checkpointWAL()   // reclaim the WAL a bulk import grew (#590)
                 await repo.refresh()
                 finishImport(.appleHealth, summary: "Imported \(summary.recordCount) records")

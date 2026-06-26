@@ -1,6 +1,7 @@
 import SwiftUI
 import StrandDesign
 import StrandAnalytics
+import StrandImport
 
 /// Settings -> Test Centre. The single home for every diagnostic, log and test control (spec section 7).
 ///
@@ -377,6 +378,9 @@ private struct TestModeRow: View {
             if on, mode.domain == .workouts {
                 WorkoutsReadoutPanel(live: live)
             }
+            if on, mode.domain == .dataImport {
+                ImportReadoutPanel(live: live)
+            }
             HStack {
                 Spacer()
                 Button("Report") { report.start(mode: mode, live: live) }
@@ -519,6 +523,23 @@ private struct WorkoutsReadoutPanel: View {
         let summary = WorkoutsReadout.lastSessionSummary(taggedTail: live.taggedTail(domain: .workouts))
         VStack(alignment: .leading, spacing: 4) {
             ReadoutRow(label: "Last session", value: summary ?? "no session yet")
+        }
+        .padding(.top, 2)
+    }
+}
+
+/// The Import & Data Ingest live-readout panel: the last import summary (parser source + version, and the
+/// most recent per-stage and day-delta fragment), parsed from the `.dataImport`-tagged log tail the import
+/// emitters write, by the pure `ImportReadout`. Binding off the tagged tail mirrors the other app-level
+/// panels, so the import layer needs no new published properties. No hardcoded colours; uses the same
+/// ReadoutRow tokens as the other panels. No em-dash in any string here.
+private struct ImportReadoutPanel: View {
+    @ObservedObject var live: LiveState
+
+    var body: some View {
+        let summary = ImportReadout.lastImportSummary(taggedTail: live.taggedTail(domain: .dataImport))
+        VStack(alignment: .leading, spacing: 4) {
+            ReadoutRow(label: "Last import", value: summary ?? "no import yet")
         }
         .padding(.top, 2)
     }
