@@ -237,6 +237,12 @@ fun DataSourcesScreen(vm: AppViewModel) {
             } else {
                 vm.ble.externalLog("Import ${summary.source} failed: ${summary.message}")
             }
+            // Import & Data Ingest test mode (Test Centre): emit the parser / per-stage / day-delta trace,
+            // tagged IMPORT, iff the mode is on. Gated zero-cost when off (one SharedPreferences bool read).
+            // The numbers are the SAME per-table counts the summary carries (Room upserts are fire-and-forget,
+            // so the persisted count equals the mapped count at this seam); emission changes nothing saved. No
+            // file name, path, or health value is in any line. Twin of the macOS DataSourcesView handlers.
+            emitImportTrace(context, vm, summary)
             refreshCounts()
             busy = false
             Toast.makeText(context, summary.message, Toast.LENGTH_LONG).show()
@@ -984,4 +990,39 @@ private fun BackupButton(
         Spacer(Modifier.width(8.dp))
         Text(label, style = NoopType.headline, color = ink)
     }
+}
+
+/**
+ * Emit the Import & Data Ingest test-mode trace for a finished import, tagged TestDomain.IMPORT, iff the
+ * mode is on. Shared by the Data Sources + Onboarding import flows (both call runImport). Gated zero-cost
+ * when off: one SharedPreferences bool read before any line is built. The lines are byte-aligned with the
+ * macOS ImportTrace shapes (parser / per-stage / day-delta), built from the ImportSummary the importer
+ * already returned. Android's Room upserts are fire-and-forget (no separate persisted count), so rowsOut
+ * equals rowsIn and daysPersisted equals daysMapped at this seam - honest, and emission changes nothing
+ * about what was saved. Never a file name, a path, or any health value.
+ */
+internal fun emitImportTrace(
+    context: android.content.Context,
+    vm: AppViewModel,
+    summary: com.noop.data.ImportSummary,
+) {
+    if (!com.noop.testcentre.TestCentre.from(context).active(com.noop.testcentre.TestDomain.IMPORT)) return
+    if (summary.totalRows <= 0) return   // a failed/empty import already logged its reason above
+    val kind = com.noop.analytics.ImportTrace.kindWire(summary.source)
+    vm.ble.externalLog(
+        com.noop.analytics.ImportTrace.parserVersionLine(kind, importerVersion = 1),
+        com.noop.testcentre.TestDomain.IMPORT,
+    )
+    for ((category, count) in summary.counts) {
+        vm.ble.externalLog(
+            com.noop.analytics.ImportTrace.stageLine(category, rowsIn = count, rowsOut = count),
+            com.noop.testcentre.TestDomain.IMPORT,
+        )
+    }
+    // Day delta: the day-keyed table count is the distinct days both mapped and persisted at this seam.
+    val days = summary.counts["dailyMetric"] ?: summary.counts["days"] ?: 0
+    vm.ble.externalLog(
+        com.noop.analytics.ImportTrace.dayDeltaLine("days", daysMapped = days, daysPersisted = days),
+        com.noop.testcentre.TestDomain.IMPORT,
+    )
 }

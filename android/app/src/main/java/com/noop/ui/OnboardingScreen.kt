@@ -749,6 +749,9 @@ private fun ImportStep(viewModel: AppViewModel) {
             val summary = withContext(Dispatchers.IO) {
                 runCatching { block() }.getOrElse { ImportSummary.failure("Import", it.message ?: "failed") }
             }
+            // Import & Data Ingest test mode (Test Centre): emit the parser / per-stage / day-delta trace,
+            // tagged IMPORT, iff the mode is on. Gated zero-cost when off; shared with the Data Sources flow.
+            emitImportTrace(context, viewModel, summary)
             busy = false
             status = summary.message
             Toast.makeText(context, summary.message, Toast.LENGTH_LONG).show()
