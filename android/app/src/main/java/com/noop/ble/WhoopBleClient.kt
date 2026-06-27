@@ -1203,9 +1203,11 @@ class WhoopBleClient(
     /** Count of INVOLUNTARY reconnects this run, surfaced as the reconnect-churn count. Reset by an
      *  intentional disconnect. */
     private var connReconnectCount = 0
-    /** The last live frame TYPE name seen, so the Connection test mode emits one frame-timing line per
-     *  genuine type transition (never per frame - the raw flood repeats one type). Diagnostic only; the
-     *  Swift side guards on LiveState.lastFrameType, which Android does not track, so this mirrors it. */
+    /** The last live frame TYPE name seen while the Connection test mode is ON, so it emits one frame-timing
+     *  line per genuine type transition (never per frame - the raw flood repeats one type). Test-only: it is
+     *  read AND written exclusively inside the mode gate, so the live hot path is untouched when the mode is
+     *  off. The Swift side instead reuses LiveState.lastFrameType (a production field the Live console readout
+     *  maintains anyway); Android has no such field, so this mirrors the emit while staying zero-cost off. */
     private var connLastFrameType: String? = null
     /** #580: tracks CONSECUTIVE empty 5/MG offloads so a 5/MG whose firmware serves no history (but streams
      *  live HR fine) reads as "history sync experimental on 5.0" instead of a sync error, and the 120s
@@ -2941,15 +2943,18 @@ class WhoopBleClient(
         if (parsed.crcOk == false) return
 
         // Connection test mode: one tagged line per genuine frame-TYPE transition (not per frame - the raw
-        // flood repeats one type, so the transition guard naturally throttles it). Gated zero-cost: the
-        // CONNECTION bool is read before any string is built. We track the last type only while the mode is
-        // on so the non-test path stays byte-identical. Twin of the macOS FrameRouter emit.
-        if (parsed.typeName != connLastFrameType) {
-            if (testCentre.active(com.noop.testcentre.TestDomain.CONNECTION)) {
+        // flood repeats one type, so the transition guard naturally throttles it). Gated FIRST so this is
+        // genuinely zero-work on the live hot path when the mode is off: the type compare AND the
+        // connLastFrameType write both happen only inside the gate, so a frame on the non-test path touches
+        // no extra state at all. (connLastFrameType is test-only here; the macOS FrameRouter instead reuses
+        // its EXISTING lastFrameType field, which the Live console readout maintains anyway, so on macOS the
+        // per-change write is not extra work. Android has no such production field, hence the gate.)
+        if (testCentre.active(com.noop.testcentre.TestDomain.CONNECTION)) {
+            if (parsed.typeName != connLastFrameType) {
                 log("frameTiming type=${parsed.typeName} t=${System.currentTimeMillis() / 1000L}s",
                     com.noop.testcentre.TestDomain.CONNECTION)
+                connLastFrameType = parsed.typeName
             }
-            connLastFrameType = parsed.typeName
         }
 
         when (parsed.typeName) {
@@ -4238,6 +4243,13 @@ class WhoopBleClient(
 
     @SuppressLint("MissingPermission")
     private fun handleDisconnect(status: Int) {
+        // Connection test mode: capture whether THIS attempt ever reached STATE_CONNECTED before the
+        // state copy below clears `connected`. Android delivers BOTH a post-connect involuntary drop AND a
+        // connect attempt that never reached connected through this one onConnectionStateChange(DISCONNECTED)
+        // seam, so `connected` here is the only signal that splits them. wasConnected == true => an
+        // involuntary drop (macOS didDisconnectPeripheral, the plain `reconnect` line); false => a failed
+        // connect that never came up (macOS didFailToConnect, the `failedConnect` variant). Read once.
+        val wasConnected = _state.value.connected
         // Capture BEFORE reset() wipes didBond: a bonded fast-path connect that dropped without ever
         // reaching a session means the OS bond is stale — fall back to a scan so a new/re-paired
         // strap can still be found (and "No WHOOP strap found" guidance still appears). (#78 fork)
@@ -4303,14 +4315,23 @@ class WhoopBleClient(
         cmdCharacteristic = null
 
         if (!intentionalDisconnect) {
-            // Connection test mode: count + describe the involuntary reconnect churn, and mark the link
-            // down for the uptime readout. Gated zero-cost (the CONNECTION bool is read before any string
-            // is built). Diagnostic only - the reconnect logic below is unchanged. Twin of macOS.
-            connReconnectCount += 1
+            // Connection test mode: count + describe the reconnect churn, and mark the link down for the
+            // uptime readout. Gated zero-cost (the CONNECTION bool is read before any string is built).
+            // Diagnostic only - the reconnect logic below is unchanged. Twin of macOS, event-for-event:
+            //  - a real drop AFTER a session (wasConnected) is the involuntary reconnect: increment the count
+            //    THEN emit `connect down` + the plain `reconnect n=N` line (macOS didDisconnectPeripheral).
+            //  - a FAILED connect (never reached STATE_CONNECTED) emits the `failedConnect` variant at the
+            //    CURRENT count WITHOUT incrementing it (macOS didFailToConnect reports n but does not bump),
+            //    so the reconnect-churn count means the same thing on both platforms.
+            if (wasConnected) connReconnectCount += 1
             if (testCentre.active(com.noop.testcentre.TestDomain.CONNECTION)) {
                 val reason = if (status == GATT_CONN_TIMEOUT) "connectionTimeout" else "status$status"
-                log("connect down (uptime ends)", com.noop.testcentre.TestDomain.CONNECTION)
-                log("reconnect n=$connReconnectCount reason=$reason", com.noop.testcentre.TestDomain.CONNECTION)
+                if (wasConnected) {
+                    log("connect down (uptime ends)", com.noop.testcentre.TestDomain.CONNECTION)
+                    log("reconnect n=$connReconnectCount reason=$reason", com.noop.testcentre.TestDomain.CONNECTION)
+                } else {
+                    log("reconnect n=$connReconnectCount failedConnect reason=$reason", com.noop.testcentre.TestDomain.CONNECTION)
+                }
             }
             if (staleDirectBond) {
                 staleDirectFailures++

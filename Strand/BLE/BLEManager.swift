@@ -2284,6 +2284,18 @@ extension BLEManager: @preconcurrency CBCentralManagerDelegate {
         discoverPrimaryServices(on: peripheral)
     }
 
+    /// Connection test mode: a STABLE, integer-token reason for a BLE error, for parity with Android's
+    /// integer GATT status (which emits `status<N>`) and a tighter export surface than a localized,
+    /// locale-dependent free-text string. We emit the `CBError`/`CBATTError` raw enum value (an Int), so
+    /// the token is locale-independent and carries no free text. A nil error reads "unknown"; an error
+    /// from neither CoreBluetooth domain reads "code?" (no localizedDescription, which could carry text).
+    private func connErrorToken(_ error: Error?) -> String {
+        guard let error else { return "unknown" }
+        if let cb = error as? CBError { return "cbError\(cb.code.rawValue)" }
+        if let att = error as? CBATTError { return "cbAttError\(att.code.rawValue)" }
+        return "code?"
+    }
+
     public func centralManager(_ central: CBCentralManager,
                                didDisconnectPeripheral peripheral: CBPeripheral,
                                error: Error?) {
@@ -2386,7 +2398,7 @@ extension BLEManager: @preconcurrency CBCentralManagerDelegate {
             connReconnectCount += 1
             if TestCentre.active(.connection) {
                 let reason = (error as? CBError)?.code == .connectionTimeout
-                    ? "connectionTimeout" : (error?.localizedDescription ?? "unknown")
+                    ? "connectionTimeout" : connErrorToken(error)
                 state.append(log: "connect down (uptime ends)", domain: .connection)
                 state.append(log: "reconnect n=\(connReconnectCount) reason=\(reason)", domain: .connection)
             }
@@ -2418,9 +2430,9 @@ extension BLEManager: @preconcurrency CBCentralManagerDelegate {
         if TestCentre.active(.connection) {
             let reason: String
             if let cbErr = error as? CBError, cbErr.code == .peerRemovedPairingInformation {
-                reason = "peerRemovedPairing (strap re-bonded elsewhere or firmware reset)"
+                reason = "peerRemovedPairing"   // stable token (strap re-bonded elsewhere or firmware reset)
             } else {
-                reason = error?.localizedDescription ?? "unknown"
+                reason = connErrorToken(error)
             }
             state.append(log: "reconnect n=\(connReconnectCount) failedConnect reason=\(reason)", domain: .connection)
         }
@@ -2611,7 +2623,7 @@ extension BLEManager: @preconcurrency CBPeripheralDelegate {
             if TestCentre.active(.connection) {
                 state.append(log: insufficient
                     ? "otherCentral bondWrite refused=insufficient (strap likely held by the WHOOP app or a stale pairing; cannot start a fresh encrypted bond)"
-                    : "otherCentral bondWrite failed=\(error.localizedDescription)", domain: .connection)
+                    : "otherCentral bondWrite failed=\(connErrorToken(error))", domain: .connection)
             }
             // WHOOP 5/MG first connect: CoreBluetooth won't start a fresh just-works bond against a strap
             // still bonded to the official WHOOP app, so the CLIENT_HELLO .withResponse write fails with
