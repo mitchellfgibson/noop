@@ -112,7 +112,8 @@ final class JournalWorkoutAppleCacheTests: XCTestCase {
         let cols = try await store.columnNamesForTest(table: "journal")
         XCTAssertTrue(cols.contains("numericValue"), "v20 must add journal.numericValue")
         // The PK is unchanged (still natural key), so existing history keys the same way.
-        XCTAssertEqual(try await store.primaryKeyColumns("journal"), ["deviceId", "day", "question"])
+        let pk = try await store.primaryKeyColumns("journal")
+        XCTAssertEqual(pk, ["deviceId", "day", "question"])
     }
 
     func testJournalNumericValueRoundTrips() async throws {
