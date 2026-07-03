@@ -461,6 +461,11 @@ final class IntelligenceEngine: ObservableObject {
                 let grav = (try? await store.gravitySamples(deviceId: owner, from: from, to: to, limit: 200_000)) ?? []
                 let steps = (try? await store.stepSamples(deviceId: owner, from: from, to: to, limit: 200_000)) ?? []
                 let skin = (try? await store.skinTempSamples(deviceId: owner, from: from, to: to, limit: 200_000)) ?? []
+                // #938: the strap family that WROTE this owner's skin-temp rows, so analyzeDay converts the raw
+                // register on the right scale (5/MG banks centidegrees, a WHOOP 4.0 v24 banks a raw ADC). The
+                // registry knows each device's model; unknown/non-WHOOP owners fall back to `.whoop5` (the prior
+                // /100 behaviour), so this only changes the mapping for a device positively identified as a 4.0.
+                let skinFamily = Self.skinTempFamily(forOwner: owner, devices: regDevices)
                 // Wrist-wear events in the night window, paired into off-wrist [start, end) intervals for the
                 // off-wrist sleep backstop (#500). The HR-gap proxy in the stager is the always-on guard;
                 // these explicit intervals sharpen it under the FRACTIONAL rule (#504) , a session is dropped
@@ -523,6 +528,7 @@ final class IntelligenceEngine: ObservableObject {
                                                      steps: steps, dayHr: dayHr, daySteps: daySteps,
                                                      dayGravity: dayGrav,
                                                      skinTemp: skin,
+                                                     skinTempFamily: skinFamily,   // #938
                                                      profile: up, baselines: baselines1, maxHROverride: maxHR,
                                                      tzOffsetSeconds: tzOffset, wristOff: wristOff,
                                                      habitualMidsleepSec: habitualMidsleepSec,
@@ -1224,6 +1230,18 @@ final class IntelligenceEngine: ObservableObject {
             candidates.append(DayOwnerResolver.Candidate(deviceId: d.id, priority: priority, hasData: hasData))
         }
         return DayOwnerResolver.resolve(day: day, lockedOwner: nil, candidates: candidates) ?? fallbackDeviceId
+    }
+
+    /// The strap family that wrote `owner`'s skin-temp rows (#938), so the nightly funnel converts the raw
+    /// register on the right scale. The registry stores each device's model string; a positively-identified
+    /// WHOOP 4.0 maps to `.whoop4` (raw-ADC skin-temp map), and EVERYTHING else — a 5/MG, a non-WHOOP source
+    /// (Oura/Apple Watch/etc. whose imported skin temp is already °C, not a strap register), or an unknown
+    /// owner not in the snapshot — falls back to `.whoop5`, the prior /100 behaviour. So this only changes
+    /// the mapping for a device we KNOW is a 4.0, never risking a wrong scale on anything else.
+    nonisolated static func skinTempFamily(forOwner owner: String, devices: [PairedDevice]) -> DeviceFamily {
+        guard let model = devices.first(where: { $0.id == owner })?.model,
+              WhoopModel(rawValue: model) == .whoop4 else { return .whoop5 }
+        return .whoop4
     }
 
     /// #137: re-score under-sampled manual workouts. A `manual` workout is scored from the live HR

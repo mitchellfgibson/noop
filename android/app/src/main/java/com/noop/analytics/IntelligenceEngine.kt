@@ -5,6 +5,7 @@ import com.noop.data.MetricSeriesRow
 import com.noop.data.SleepSession
 import com.noop.data.WhoopRepository
 import com.noop.data.WorkoutRow
+import com.noop.protocol.DeviceFamily
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -55,6 +56,12 @@ object IntelligenceEngine {
          *  active id so the universal dayOwner diagnostic can name where new data is being WRITTEN, which
          *  is the read-vs-write mismatch the #814/#799 spine bug was about. */
         suspend fun activeWriteId(): String? = null
+
+        /** The strap family that wrote [deviceId]'s rows (#938), so the nightly skin-temp funnel converts
+         *  the raw register on the right scale (5/MG centidegrees vs a WHOOP 4.0 v24 raw ADC). The default
+         *  returns WHOOP5 (the prior /100 behaviour), so legacy/test sources are byte-identical;
+         *  [RegistryDayOwnerSource] resolves a positively-identified 4.0 to WHOOP4. */
+        suspend fun skinTempFamily(deviceId: String): DeviceFamily = DeviceFamily.WHOOP5
     }
 
     /** Minimum HR samples in a day's window before it is worth scoring. */
@@ -387,6 +394,11 @@ object IntelligenceEngine {
             val grav = repo.gravitySamples(owner, from, to, STREAM_LIMIT)
             val steps = repo.stepSamples(owner, from, to, STREAM_LIMIT)
             val skin = repo.skinTempSamples(owner, from, to, STREAM_LIMIT)
+            // #938: the strap family that WROTE this owner's skin-temp rows, so analyzeDay converts the raw
+            // register on the right scale (5/MG banks centidegrees, a WHOOP 4.0 v24 banks a raw ADC). The
+            // owner source resolves it from the registry; unknown/non-WHOOP owners fall back to WHOOP5 (the
+            // prior /100 behaviour), so only a device positively identified as a 4.0 changes scale.
+            val skinFamily = ownerSource?.skinTempFamily(owner) ?: DeviceFamily.WHOOP5
             // Wrist-wear events in the night window, paired into off-wrist [start, end) intervals for the
             // off-wrist sleep backstop (#500). The HR-gap proxy in the stager is the always-on guard;
             // these explicit intervals sharpen it under the FRACTIONAL rule (#504) , a session is dropped
@@ -441,6 +453,7 @@ object IntelligenceEngine {
                 daySteps = daySteps,
                 dayGravity = dayGrav,
                 skinTemp = skin,
+                skinTempFamily = skinFamily,   // #938
                 profile = profile,
                 baselines = baselines1,
                 maxHROverride = maxHROverride,

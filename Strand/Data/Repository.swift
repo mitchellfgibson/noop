@@ -1386,9 +1386,14 @@ final class Repository: ObservableObject {
         // run here (each `timelineRawMetric` awaits the store actor); the dedup + sort + downsample over
         // the union is handed to a utility task so it runs OFF the main actor on a dense window. Mirrors
         // `restageFromRaw`.
+        // #938: resolve each source id's strap family ONCE (skin-temp raw→°C is family-specific: 5/MG
+        // centidegrees vs a 4.0 v24 raw ADC). Cheap registry snapshot; a positively-identified 4.0 maps to
+        // `.whoop4`, everything else (5/MG, imports, unknown) to `.whoop5` — the prior /100 behaviour.
+        let familyById = Self.skinTempFamilies(store: store, ids: unionIds)
         var perId: [[TrendPoint]] = []
         for id in unionIds {
-            perId.append(await timelineRawMetric(metric: metric, store: store, source: id, from: from, to: to))
+            perId.append(await timelineRawMetric(metric: metric, store: store, source: id,
+                                                 family: familyById[id] ?? .whoop5, from: from, to: to))
         }
         let points = await Task.detached(priority: .utility) {
             Self.dedupSortDownsampleRaw(perId, isRaw: isRaw, bucketSeconds: bucket)
@@ -1397,11 +1402,27 @@ final class Repository: ObservableObject {
         return TimelineSeries(points: points, isRaw: isRaw, bucketSeconds: isRaw ? 1 : bucket)
     }
 
-    /// Raw points for a non-HR timeline metric, mapped to display units (skin temp → °C via raw/100,
-    /// matching #156 centidegrees; HRV → per-RR instantaneous from RR ms; respiration/SpO₂/motion as the
-    /// stored signal). Empty when the strap offloaded nothing for the window.
+    /// Map each device id to the strap family that wrote its rows (#938), for the family-aware skin-temp
+    /// raw→°C conversion. Reads the registry ONCE; a device whose model is "WHOOP 4.0" maps to `.whoop4`,
+    /// and every other id — a 5/MG, a non-WHOOP import, or an id absent from the registry — maps to
+    /// `.whoop5` (the prior /100 behaviour), so only a KNOWN 4.0 changes scale. Best-effort: an unreadable
+    /// registry yields an empty map, so every caller falls back to `.whoop5`.
+    private static func skinTempFamilies(store: WhoopStore, ids: [String]) -> [String: DeviceFamily] {
+        let devices = (try? DeviceRegistryStore(dbQueue: store.registryWriter).all()) ?? []
+        var out: [String: DeviceFamily] = [:]
+        for id in ids {
+            let isW4 = devices.first(where: { $0.id == id }).map { WhoopModel(rawValue: $0.model) == .whoop4 } ?? false
+            out[id] = isW4 ? .whoop4 : .whoop5
+        }
+        return out
+    }
+
+    /// Raw points for a non-HR timeline metric, mapped to display units (skin temp → °C DEVICE-FAMILY-AWARE
+    /// via `skinTempCelsius`: 5/MG centidegrees (#156), WHOOP 4.0 v24 raw ADC (#938); HRV → per-RR
+    /// instantaneous from RR ms; respiration/SpO₂/motion as the stored signal). Empty when the strap
+    /// offloaded nothing for the window. `family` is the strap that wrote `source`'s rows.
     private func timelineRawMetric(metric: TimelineMetric, store: WhoopStore, source: String,
-                                   from: Int, to: Int) async -> [TrendPoint] {
+                                   family: DeviceFamily, from: Int, to: Int) async -> [TrendPoint] {
         switch metric {
         case .hr:
             return []   // handled by the caller's HR path
@@ -1431,7 +1452,8 @@ final class Repository: ObservableObject {
         case .skinTemp:
             let s = (try? await store.skinTempSamples(deviceId: source, from: from, to: to, limit: 200_000)) ?? []
             return await Task.detached(priority: .utility) {
-                s.map { Self.timelinePoint($0.ts, Double($0.raw) / 100.0) }   // centidegrees → °C (#156)
+                // #938: family-aware raw→°C — 5/MG centidegrees (raw/100, #156), 4.0 v24 raw ADC map.
+                s.map { Self.timelinePoint($0.ts, skinTempCelsius(raw: $0.raw, family: family)) }
             }.value
         case .respiration:
             let s = (try? await store.respSamples(deviceId: source, from: from, to: to, limit: 200_000)) ?? []
