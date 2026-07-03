@@ -388,12 +388,27 @@ struct LiquidTodayView: View {
     private var heartRateSection: some View {
         VStack(spacing: 8) {
             sectionHead("HEART RATE", trailing: "Live")
-            card {
-                // Isolated leaf: it observes LiveState so the ~1 Hz HR notifies re-render ONLY this card,
-                // never the whole Today. Shows the current bpm live with a rolling beat-by-beat trace;
-                // falls back to today's banked 5-minute trace when the strap isn't streaming.
-                LiquidLiveHR(tint: liquidHeart, fallback: hrValues, animated: dataLoaded)
+            // #979: the whole-day HR trend (Deep Timeline, with sleep + activity bands marked) still
+            // exists but was buried behind Metrics → Show all → Deep Timeline. Make the live HR card a
+            // one-tap route into it, with a visible "Full day" affordance so it's discoverable again.
+            NavigationLink { FullDayChartView() } label: {
+                card {
+                    VStack(spacing: 10) {
+                        // Isolated leaf: it observes LiveState so the ~1 Hz HR notifies re-render ONLY
+                        // this card, never the whole Today. Shows the current bpm live with a rolling
+                        // beat-by-beat trace; falls back to today's banked 5-minute trace when idle.
+                        LiquidLiveHR(tint: liquidHeart, fallback: hrValues, animated: dataLoaded)
+                        HStack(spacing: 4) {
+                            Spacer()
+                            Text("Full day").font(StrandFont.caption).foregroundStyle(StrandPalette.accent)
+                            Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(StrandPalette.accent)
+                        }
+                    }
+                }
             }
+            .buttonStyle(LiquidPressStyle())
+            .accessibilityHint("Opens the full-day heart rate timeline")
         }
     }
 
@@ -1171,6 +1186,14 @@ private struct LiquidBatteryButton: View {
                     Text("\(Int(pct.rounded()))")
                         .font(.system(size: 9, weight: .bold))
                         .foregroundStyle(.white.opacity(0.9))
+                    if live.charging == true {
+                        // #972: the default Today never surfaced charging state — only the % ring. A small
+                        // bolt over the ring gives the same signal as the "· Charging" text on Mac/Android.
+                        Image(systemName: "bolt.fill")
+                            .font(.system(size: 7, weight: .bold))
+                            .foregroundStyle(StrandPalette.chargeColor)
+                            .offset(y: -10)
+                    }
                 } else {
                     Image(systemName: "bolt.slash")
                         .font(.system(size: 11))
@@ -1180,7 +1203,11 @@ private struct LiquidBatteryButton: View {
             .frame(width: 34, height: 34)
         }
         .buttonStyle(LiquidPressStyle())
-        .accessibilityLabel(live.batteryPct.map { "Strap battery \(Int($0.rounded())) percent" } ?? "Strap battery")
+        .accessibilityLabel(batteryAccessibility)
+    }
+    private var batteryAccessibility: String {
+        let base = live.batteryPct.map { "Strap battery \(Int($0.rounded())) percent" } ?? "Strap battery"
+        return live.charging == true ? base + ", charging" : base
     }
     private func ringColor(_ p: Double) -> Color {
         p < 15 ? StrandPalette.statusCritical : p < 35 ? StrandPalette.statusWarning : StrandPalette.chargeColor
@@ -1195,7 +1222,9 @@ private struct LiquidStrapBatteryRow: View {
             HStack {
                 Text("Strap battery").font(StrandFont.subhead).foregroundStyle(StrandPalette.textSecondary)
                 Spacer()
-                Text("\(Int(pct.rounded()))%").font(StrandFont.number(15)).foregroundStyle(StrandPalette.textPrimary)
+                // #972: append "· Charging" here too, matching the Settings / Mac / Android battery pill.
+                Text(live.charging == true ? "\(Int(pct.rounded()))% · Charging" : "\(Int(pct.rounded()))%")
+                    .font(StrandFont.number(15)).foregroundStyle(StrandPalette.textPrimary)
             }
         }
     }
